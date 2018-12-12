@@ -1,6 +1,8 @@
 ## DOCUMENTATION
 This is a basic scraper script base on selenium with chrome webdriver.
+
 Support:
+
     1. Page load content by javascript.
     2. Capture screenshot and send to emails.
     3. Redis store and restore to inscrease speed.
