@@ -13,16 +13,14 @@ class Scraper
 
   @@driver = nil
   @@redis = nil
-
+  @@attachments = []
 
   def self.main
-    emails = ENV['EMAILS'].split(',')
+    emails = ENV['EMAILS'].to_s.split(',')
     current_session.navigate.to 'https://google.com.vn'
-    capture_screen(emails: emails)
-    # EXAMPLE
-    # search_field.send_key(Selenium::WebDriver::Keys::KEYS[:backspace])
+    @@attachments << capture_screen
+    send_emails(emails: emails) if emails.any?
   end
-
 
   def self.current_session
     @@driver ||= create_selenium_session
@@ -31,10 +29,10 @@ class Scraper
   def self.create_selenium_session
     puts "Creating browser for #{ENV['SELENIUM_TYPE'] || 'destop'}"
 
-    default_capabilities = {
-      args: %w(start-maximized disable-infobars disable-extensions)
-    }
+    args = %w[start-maximized disable-infobars disable-extensions]
+    args << 'headless' if ENV['HEADLESS'] == 'true'
 
+    default_capabilities = { args: args }
     default_capabilities.merge!(binary: ENV['GOOGLE_CHROME_SHIM']) if ENV.fetch('GOOGLE_CHROME_SHIM', nil)
 
     capabilities = Selenium::WebDriver::Remote::Capabilities.chrome(chromeOptions: default_capabilities)
@@ -65,33 +63,35 @@ class Scraper
     end
   end
 
-  def self.capture_screen(emails: [])
+  def self.capture_screen
     @@folder_path = File.join(File.dirname(__FILE__), "screenshots")
     FileUtils.mkdir_p(@@folder_path)
     filename = "screenshot_#{Time.now.to_i}.png"
     file_path = File.join(@@folder_path, filename)
-    current_session.manage.window.resize_to(1366, 768)
+    current_session.manage.window.resize_to(1600, 750)
     sleep(0.5)
     current_session.save_screenshot(file_path)
-    send_emails(emails: emails, file_path: file_path) if emails.any?
+    file_path
   end
 
-  def self.send_emails(emails: [], file_path: nil)
+  def self.send_emails(emails: [])
     puts "Sending screenshot to email #{emails.join(', ')}"
     emails.each do |email|
       from = SendGrid::Email.new(email: 'screenshot@hiepdinh.info')
       to = SendGrid::Email.new(email: email)
-      subject = 'The screenshot from Scraper'
-      content = SendGrid::Content.new(type: 'text/plain', value: 'This is screenshot')
+      subject = 'The screenshot from KisCapture'
+      content = SendGrid::Content.new(type: 'text/plain', value: "Capture at #{Time.now }")
       mail = SendGrid::Mail.new(from, subject, to, content)
 
-      attachment = Attachment.new
-      attachment.content = Base64.strict_encode64(open(file_path).to_a.join)
-      attachment.type = 'image/png'
-      attachment.filename = file_path.split('/')[-1]
-      attachment.disposition = 'attachment'
-      attachment.content_id = 'Screenshot'
-      mail.add_attachment(attachment)
+      @@attachments.each do |file_path|
+        attachment = Attachment.new
+        attachment.content = Base64.strict_encode64(open(file_path).to_a.join)
+        attachment.type = 'image/png'
+        attachment.filename = file_path.split('/')[-1]
+        attachment.disposition = 'attachment'
+        attachment.content_id = 'Screenshot'
+        mail.add_attachment(attachment)
+      end
 
       sg = SendGrid::API.new(api_key: ENV['SENDGRID_API_KEY'])
       puts sg.client.mail._('send').post(request_body: mail.to_json).inspect
@@ -119,6 +119,33 @@ class Scraper
     else
       print "Fail (maybe key not existed)\n"
     end
+  end
+
+  def self.wait_for(selector = '', delay: 0.5)
+    sleep(delay) until find_css(selector)
+    find_css(selector)
+  end
+
+  def self.find_css(selector)
+    current_session.find_element(css: selector) rescue nil
+  end
+
+  def self.set_attribute(selector, tag, value)
+    script("document.querySelectorAll('#{selector}').forEach(function(e){ e.setAttribute('#{tag}', '#{value}') });")
+  end
+
+  def self.remove(selector)
+    script("document.querySelectorAll('#{selector}').forEach(function(e){ e.remove() });")
+  end
+
+  def self.script(script)
+    current_session.execute_script(script)
+  end
+
+  def self.fill_in(selector, data)
+    input_field = find_css(selector)
+    50.times{ input_field.send_key(Selenium::WebDriver::Keys::KEYS[:backspace]) }
+    input_field.send_key(data)
   end
 end
 
